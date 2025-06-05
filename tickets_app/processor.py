@@ -46,6 +46,9 @@ def process_new_emails(limit: int = 10) -> int:
             session.add(ticket)
             session.commit()
 
+        dest_dir = config.ATTACHMENTS_DIR / ticket.number
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
         email = models.Email(
             ticket_id=ticket.id,
             entry_id=msg.entry_id,
@@ -54,15 +57,20 @@ def process_new_emails(limit: int = 10) -> int:
             subject=msg.subject,
             received=msg.received,
             body=msg.body,
-            attachments_path=str(config.ATTACHMENTS_DIR / msg.entry_id),
+            attachments_path=str(dest_dir),
         )
         session.add(email)
         session.commit()
 
-        # register attachments
+        # register attachments and move them to the ticket directory
         for path in msg.attachments:
+            dest = dest_dir / path.name
+            try:
+                path.rename(dest)
+            except Exception:
+                dest = path
             attachment = models.Attachment(
-                ticket_id=ticket.id, path=str(path), from_email=True
+                ticket_id=ticket.id, path=str(dest), from_email=True
             )
             session.add(attachment)
 
