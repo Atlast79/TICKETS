@@ -11,7 +11,7 @@ from .ai_processor import analyze_email
 logger = logging.getLogger(__name__)
 
 
-def process_new_emails(limit: int = 10) -> int:
+def process_new_emails(limit: int | None = None) -> int:
     """Fetch new emails, analyze them and store information in the database.
 
     Parameters
@@ -29,14 +29,19 @@ def process_new_emails(limit: int = 10) -> int:
     session = Session()
     processed = 0
 
+    limit = limit or config.MAX_EMAILS
+    logger.info("Fetching up to %s new emails", limit)
+
     for msg in fetch_emails(config.OUTLOOK_FOLDER)[:limit]:
         # skip if email already stored
         if session.query(models.Email).filter_by(entry_id=msg.entry_id).first():
+            logger.debug("Email %s already processed", msg.entry_id)
             continue
 
         # analyze with OpenAI
         analysis = analyze_email(msg.body)
         if analysis.get("es_ticket") is False:
+            logger.info("Email %s not identified as ticket", msg.entry_id)
             continue
 
         ticket_number = analysis.get("numero_de_ticket") or msg.subject
@@ -93,4 +98,5 @@ def process_new_emails(limit: int = 10) -> int:
         session.commit()
         processed += 1
 
+    logger.info("Processed %s emails", processed)
     return processed

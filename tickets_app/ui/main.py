@@ -2,6 +2,7 @@
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+import webbrowser
 from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -21,10 +22,23 @@ class TicketApp(tk.Tk):
         self.geometry("800x600")
         self.session = Session()
         self.create_widgets()
+        self.refresh_tree()
 
     def create_widgets(self):
+        search_frame = ttk.Frame(self)
+        search_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(search_frame, text="Buscar:").pack(side=tk.LEFT, padx=5)
+        self.search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=self.search_var)
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(search_frame, text="Aplicar", command=self.refresh_tree).pack(
+            side=tk.LEFT, padx=5
+        )
+
         self.tree = ttk.Treeview(
-            self, columns=("number", "status", "urgency"), show="headings"
+            self,
+            columns=("number", "status", "urgency"),
+            show="headings",
         )
         self.tree.heading("number", text="Ticket")
         self.tree.heading("status", text="Estado")
@@ -32,8 +46,22 @@ class TicketApp(tk.Tk):
         self.tree.pack(fill=tk.BOTH, expand=True)
         self.tree.bind("<Double-1>", self.open_details)
 
+        self.tree.tag_configure("cerrado", background="#d0ffd0")
+        self.tree.tag_configure("abierto", background="#ffd0d0")
+
         refresh_btn = ttk.Button(self, text="Refrescar", command=self.refresh)
         refresh_btn.pack(side=tk.BOTTOM, pady=10)
+
+    def refresh_tree(self):
+        query = self.session.query(models.Ticket)
+        term = self.search_var.get().strip()
+        if term:
+            query = query.filter(models.Ticket.number.contains(term))
+
+        self.tree.delete(*self.tree.get_children())
+        for t in query.all():
+            tag = t.status or "abierto"
+            self.tree.insert("", tk.END, values=(t.number, t.status, t.urgency), tags=(tag,))
 
     def open_details(self, event):
         item = self.tree.focus()
@@ -61,6 +89,15 @@ class TicketApp(tk.Tk):
         attach_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         attach_list = tk.Listbox(attach_frame)
         attach_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        def open_file(event):
+            idx = attach_list.curselection()
+            if not idx:
+                return
+            path = attach_list.get(idx[0])
+            webbrowser.open(Path(path).absolute().as_uri())
+
+        attach_list.bind("<Double-1>", open_file)
 
         for att in ticket.attachments:
             attach_list.insert(tk.END, att.path)
@@ -116,10 +153,7 @@ class TicketApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror("Error", str(exc))
 
-        self.tree.delete(*self.tree.get_children())
-        tickets = self.session.query(models.Ticket).all()
-        for t in tickets:
-            self.tree.insert("", tk.END, values=(t.number, t.status, t.urgency))
+        self.refresh_tree()
 
 
 def main():
