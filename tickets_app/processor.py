@@ -1,0 +1,88 @@
+"""High level routines to fetch emails and update the database."""
+
+import logging
+from datetime import datetime
+
+from . import config
+from .db import Session, init_db, models
+from .email_client import fetch_emails
+from .ai_processor import analyze_email
+
+logger = logging.getLogger(__name__)
+
+
+def process_new_emails(limit: int = 10) -> int:
+    """Fetch new emails, analyze them and store information in the database.
+
+    Parameters
+    ----------
+    limit: int
+        Maximum number of emails to process in this call.
+
+    Returns
+    -------
+    int
+        Number of emails processed.
+    """
+
+    init_db()
+    session = Session()
+    processed = 0
+
+    for msg in fetch_emails(config.OUTLOOK_FOLDER)[:limit]:
+        # skip if email already stored
+        if session.query(models.Email).filter_by(entry_id=msg.entry_id).first():
+            continue
+
+        # analyze with OpenAI
+        analysis = analyze_email(msg.body)
+        if analysis.get("es_ticket") is False:
+            continue
+
+        ticket_number = analysis.get("numero_de_ticket") or msg.subject
+        ticket = session.query(models.Ticket).filter_by(number=ticket_number).first()
+        if not ticket:
+            ticket = models.Ticket(number=ticket_number, status="nuevo")
+            session.add(ticket)
+            session.commit()
+
+        email = models.Email(
+            ticket_id=ticket.id,
+            entry_id=msg.entry_id,
+            sender=msg.sender,
+            recipients=msg.recipients,
+            subject=msg.subject,
+            received=msg.received,
+            body=msg.body,
+            attachments_path=str(config.ATTACHMENTS_DIR / msg.entry_id),
+        )
+        session.add(email)
+        session.commit()
+
+        # register attachments
+        for path in msg.attachments:
+            attachment = models.Attachment(
+                ticket_id=ticket.id, path=str(path), from_email=True
+            )
+            session.add(attachment)
+
+        obs = models.Observation(
+            ticket_id=ticket.id,
+            email_id=email.id,
+            summary=analysis.get("resumen"),
+            next_step=analysis.get("proximo_paso"),
+            urgency=analysis.get("urgencia"),
+            closed=analysis.get("cerrado", False),
+        )
+        session.add(obs)
+
+        # update ticket fields
+        ticket.status = "cerrado" if obs.closed else "abierto"
+        ticket.final_observation = obs.summary
+        ticket.urgency = obs.urgency
+        ticket.last_update = datetime.utcnow()
+
+        session.commit()
+        processed += 1
+
+    return processed
