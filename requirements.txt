@@ -1,0 +1,4 @@
+SQLAlchemy>=1.4
+openai
+python-dotenv
+pywin32; platform_system == "Windows"
